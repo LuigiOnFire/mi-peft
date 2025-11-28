@@ -1,0 +1,78 @@
+# MI-PEFT Phase 1: Circuit Localization Config
+# =============================================
+
+model:
+  name: "gpt2"
+  # Architecture: 12 layers, 12 heads, 768 hidden dim
+  n_layers: 12
+  n_heads: 12
+  
+data:
+  num_examples: 50
+  seed: 42
+  
+  # SVA target tokens
+  correct_token: " are"   # Note: leading space for GPT-2 tokenization
+  incorrect_token: " is"
+  
+  # Vocabulary for minimal pairs
+  plural_subjects:
+    - "cats"
+    - "dogs"
+    - "keys"
+    - "books"
+    - "students"
+    - "teachers"
+    - "doctors"
+    - "nurses"
+    - "artists"
+    - "writers"
+    
+  singular_subjects:
+    - "cat"
+    - "dog"
+    - "key"
+    - "book"
+    - "student"
+    - "teacher"
+    - "doctor"
+    - "nurse"
+    - "artist"
+    - "writer"
+    
+  distractors:
+    - "the cabinet"
+    - "the garden"
+    - "the office"
+    - "the building"
+    - "the park"
+    - "the school"
+    - "the hospital"
+    - "the museum"
+    - "the library"
+    - "the station"
+    
+  templates:
+    - "The {subject} near {distractor}"
+    - "The {subject} beside {distractor}"
+    - "The {subject} behind {distractor}"
+    - "The {subject} inside {distractor}"
+    - "The {subject} from {distractor}"
+
+patching:
+  # What to patch
+  component: "z"  # TransformerLens: attention head output (z = head output before projection)
+  
+  # Patch at which token position
+  position: "end"  # Patch at final token (where prediction happens)
+  
+analysis:
+  # Thresholding for critical heads
+  method: "percentile"
+  threshold: 90  # Top 10%
+  
+output:
+  dir: "./outputs"
+  save_scores: true
+  save_plots: true
+  save_mask: true
