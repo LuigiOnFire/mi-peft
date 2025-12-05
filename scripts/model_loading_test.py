@@ -1,3 +1,8 @@
+"""
+This is the second test script.
+It verifies that model loading works, tokenization, and activation patching.
+"""
+
 import sys
 import numpy as np
 from pathlib import Path
@@ -27,8 +32,8 @@ print(f"Logits shape: {logits.shape}")  # Should be (1, seq_len, vocab_size)
 
 # Check logit difference at final position
 final_logit = logits[0, -1, :]
-logit_diff = final_logit[are_token] - final_logit[is_token]
-print(f"Logit difference (should be positive for plural): {logit_diff.item():.4f}")
+logit_diff = final_logit[is_token] - final_logit[are_token]
+print(f"Logit difference (should be positive for singular): {logit_diff.item():.4f}")
 
 pair = MinimalPair(
     clean="The cats near the dog",

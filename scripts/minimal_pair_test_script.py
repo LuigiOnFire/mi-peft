@@ -1,3 +1,9 @@
+"""
+The first checkpoint test script to run.
+This test script verifies the functionality of the minimal pair generation
+by generating a set of minimal pairs and checking their correctness.
+"""
+
 import sys
 from pathlib import Path
 
