@@ -1,3 +1,9 @@
+"""
+Third verification test for activation patching. 
+This test runs the full activation patching pipeline on a simple minimal pair 
+and checks that the results are as expected.
+"""
+
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt

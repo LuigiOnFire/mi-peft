@@ -1,12 +1,14 @@
 """A dataclass and generator function for SVA sentence pairs."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import random
 
 @dataclass
 class MinimalPair:
     """A dataclass representing a minimal pair of sentences."""
-    clean: str # "The cat is near the dog"
-    corrupted: str # "The cat are near the dog"
+    clean: str               # Prefix ending before the diverging verb, plural subject
+    corrupted: str           # Prefix ending before the diverging verb, singular subject
+    target_correct: str = " are"    # The correct (plural) verb token
+    target_incorrect: str = " is"   # The incorrect (singular) verb token
 
     def generate_minimal_pairs(
         self,

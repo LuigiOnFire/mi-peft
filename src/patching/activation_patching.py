@@ -21,9 +21,19 @@ class PatchingResult:
     corrupted_logit_diff: float
 
 def compute_logit_difference(logits, correct_id, incorrect_id):
-    """Get logit(are) - logit(is) at final position"""
+    """Get logit(correct) - logit(incorrect) at final position"""
     final_logits = logits[0, -1, :]
     return (final_logits[correct_id] - final_logits[incorrect_id]).item()
+
+def get_first_token_id(model, word: str) -> int:
+    """Return the token ID of the first token of a word.
+    
+    For multi-token words (e.g. "don't" → [" don", "'t"]), only the first
+    token is used. This is valid because the first token carries the
+    agreement signal (e.g. " don" vs " doesn").
+    """
+    tokens = model.to_tokens(" " + word.strip(), prepend_bos=False)
+    return tokens[0, 0].item()
 
 def logits_to_ave_logit_diff(
     logits: Float[Tensor, "batch seq d_vocab"],
@@ -53,7 +63,10 @@ def get_cache(model, tokens) -> ActivationCache:
 def make_patch_hook(clean_cache, layer, head):
     def hook(activation, hook):
         # activation shape: (batch, seq_len, n_heads, d_head)
-        activation[:, :, head, :] = clean_cache[f"blocks.{layer}.attn.hook_z"][:, :, head, :]
+        # Only patch the final position to avoid sequence length mismatches
+        # between clean and corrupted inputs, and because the final position
+        # is where the verb prediction is made.
+        activation[:, -1, head, :] = clean_cache[f"blocks.{layer}.attn.hook_z"][:, -1, head, :]
         return activation
     return hook
 
@@ -74,19 +87,14 @@ def run_activation_patching(model, pair) -> PatchingResult:
     clean_logits, clean_cache = model.run_with_cache(clean_tokens)
     corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)    
 
-    correct_id = model.to_single_token(" are")
-    incorrect_id = model.to_single_token(" is")
+    correct_id = get_first_token_id(model, pair.target_correct)
+    incorrect_id = get_first_token_id(model, pair.target_incorrect)
 
-    answer_tokens = torch.tensor([[correct_id, incorrect_id]], device=clean_logits.device)    
-
-    clean_logit_diff = logits_to_ave_logit_diff(clean_logits, answer_tokens)
+    clean_logit_diff = compute_logit_difference(clean_logits, correct_id, incorrect_id)
     print(f"Clean logit diff: {clean_logit_diff:.4f}")
 
-    corrupted_logit_diff = logits_to_ave_logit_diff(corrupted_logits, answer_tokens)
-    print(f"Corrupted logit diff: {corrupted_logit_diff:.4f}")
-    
-    clean_logit_diff = compute_logit_difference(clean_logits, correct_id, incorrect_id)
     corrupted_logit_diff = compute_logit_difference(corrupted_logits, correct_id, incorrect_id)
+    print(f"Corrupted logit diff: {corrupted_logit_diff:.4f}")
 
     # Pre-allocate scores array
     n_layers = model.cfg.n_layers
