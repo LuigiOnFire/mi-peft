@@ -1,7 +1,11 @@
 from torchgen import model
 import yaml
+import numpy as np
+
 from typing import cast
 from datasets import load_dataset, Dataset, DatasetDict
+from src.analysis.scoring import rank_heads, get_critical_heads
+from src.analysis.visualization import plot_patching_heatmap
 from src.patching.activation_patching import run_activation_patching
 from src.data.minimal_pair_gen import MinimalPair
 from transformer_lens import HookedTransformer
@@ -72,3 +76,23 @@ if __name__ == "__main__":
 
     for pair in pairs:
         patching_result = run_activation_patching(model, pair)
+    
+    percentile=95
+
+    # Verify
+    import warnings
+    if patching_result.scores.shape != (12, 12):
+        warnings.warn(f"Unexpected scores shape: {patching_result.scores.shape}, expected (12, 12)")
+    if patching_result.clean_logit_diff <= 0:
+        warnings.warn(f"Clean logit diff {patching_result.clean_logit_diff:.4f} is not positive — plural may not be favored")
+    if patching_result.corrupted_logit_diff >= 0:
+        warnings.warn(f"Corrupted logit diff {patching_result.corrupted_logit_diff:.4f} is not negative — singular may not be favored")
+    print(f"Max score: {patching_result.scores.max().item():.4f} at {np.unravel_index(patching_result.scores.argmax(), patching_result.scores.shape)}")
+
+    ranked = rank_heads(patching_result.scores)
+    print(f"Top 5 heads: {ranked[:5]}")
+
+    critical = get_critical_heads(patching_result.scores, percentile=percentile)
+    print(f"Critical heads (top {100-percentile}%): {critical}")
+
+    fig = plot_patching_heatmap(patching_result.scores, save_path="figures/test_activation_patching_heatmap.png")
