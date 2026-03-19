@@ -1,98 +1,85 @@
-from torchgen import model
 import yaml
 import numpy as np
+import warnings
+from transformer_lens import HookedTransformer
 
-from typing import cast
-from datasets import load_dataset, Dataset, DatasetDict
 from src.analysis.scoring import rank_heads, get_critical_heads
 from src.analysis.visualization import plot_patching_heatmap
 from src.patching.activation_patching import run_activation_patching
-from src.data.minimal_pair_gen import MinimalPair
-from transformer_lens import HookedTransformer
-
-def load_blimp_pairs_for_mi(paradigm: str, num_examples: int = 50, seed: int = 42) -> list[MinimalPair]:
-    # "blimp" is the safer, canonical HF dataset name
-    raw_data = load_dataset("blimp", paradigm)    
-    dataset_dict = cast(DatasetDict, raw_data)
-    train_dataset = cast(Dataset, dataset_dict["train"])
-    dataset = train_dataset.shuffle(seed=seed).select(range(num_examples))
-
-    pairs = []
-    for row in dataset:
-        print(f"Processing row: {row['sentence_good']} / {row['sentence_bad']}")
-        good_words = row["sentence_good"].split()
-        bad_words = row["sentence_bad"].split()
-        
-        # 1. Find where the verb diverges
-        diverge_idx = next((i for i, (g, b) in enumerate(zip(good_words, bad_words)) if g != b), None)
-        
-        if diverge_idx is not None:
-            # 2. Extract targets and truncate
-            correct_target = good_words[diverge_idx]
-            incorrect_target = bad_words[diverge_idx]
-            clean_prefix = " ".join(good_words[:diverge_idx])
-            
-            # 3. Create a valid corrupted prefix (e.g., swapping plural for singular)
-            # NOTE: You will need a function here to flip the number of the subject noun
-            corrupted_prefix = flip_subject_number(clean_prefix) 
-            
-            pairs.append(MinimalPair(
-                clean=clean_prefix,
-                corrupted=corrupted_prefix,
-                target_correct=correct_target,
-                target_incorrect=incorrect_target
-            ))
-            
-    return pairs
-
-def flip_subject_number(prefix: str) -> str:
-    # This is a very naive implementation. You would need a more robust way to identify the subject noun and flip its number.
-    words = prefix.split()
-    if not words:
-        return prefix
-    
-    last_word = words[-1]
-    
-    # Simple heuristic: if it ends with 's', assume it's plural and remove 's' to make singular
-    if last_word.endswith('s'):
-        flipped_word = last_word[:-1]  # Remove 's' for plural -> singular
-    else:
-        flipped_word = last_word + 's'  # Add 's' for singular -> plural
-    
-    words[-1] = flipped_word
-    return " ".join(words)
+# Import your newly refactored generator and dataclass
+from src.data.minimal_pair_gen import MinimalPair, generate_minimal_pairs
 
 if __name__ == "__main__":
+    # 1. Load basic configs (Removed paradigm, as we don't use BLiMP anymore)
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
     
-    paradigm = config["paradigm"]
     num_examples = config.get("num_examples", 50)
     seed = config.get("seed", 42)
 
+    # 2. Initialize Model
+    print("Loading GPT-2...")
     model = HookedTransformer.from_pretrained("gpt2")
     
-    pairs = load_blimp_pairs_for_mi(paradigm, num_examples, seed)
+    # 3. Define our strictly controlled vocabulary
+    # Notice the leading spaces to ensure they are single BPE tokens!
+    plural_subjects = [" dogs", " drivers", " guards", " authors", " CEOs"]
+    singular_subjects = [" dog", " driver", " guard", " author", " CEO"]
+    distractors = [" by the tree", " in the park", " with the hat", " behind the building"]
 
-    for pair in pairs:
-        patching_result = run_activation_patching(model, pair)
+    # 4. Generate perfectly aligned, index-mapped data
+    pairs = generate_minimal_pairs(
+        plural_subjects=plural_subjects,
+        singular_subjects=singular_subjects,
+        distractors=distractors,
+        num_examples=num_examples,
+        seed=seed
+    )
+
+    # 5. Execute Patching Loop & Aggregate Scores
+    n_layers = model.cfg.n_layers
+    n_heads = model.cfg.n_heads
     
-    percentile=95
+    total_scores = np.zeros((n_layers, n_heads))
+    valid_pairs = 0
+    total_base_grammaticality = 0.0
 
-    # Verify
-    import warnings
-    if patching_result.scores.shape != (12, 12):
-        warnings.warn(f"Unexpected scores shape: {patching_result.scores.shape}, expected (12, 12)")
-    if patching_result.clean_logit_diff <= 0:
-        warnings.warn(f"Clean logit diff {patching_result.clean_logit_diff:.4f} is not positive — plural may not be favored")
-    if patching_result.corrupted_logit_diff >= 0:
-        warnings.warn(f"Corrupted logit diff {patching_result.corrupted_logit_diff:.4f} is not negative — singular may not be favored")
-    print(f"Max score: {patching_result.scores.max().item():.4f} at {np.unravel_index(patching_result.scores.argmax(), patching_result.scores.shape)}")
+    print(f"Running patching on {len(pairs)} pairs...")
+    for pair in pairs:
+        result = run_activation_patching(model, pair)
+        
+        # Safety check: Only aggregate pairs where the model actually knows the grammar
+        # (Clean should prefer correct, Corrupted should prefer correct_for_corrupted)
+        if result.clean_logit_diff > 0 and result.corrupted_logit_diff < 0:
+            total_scores += result.scores
+            total_base_grammaticality += result.clean_logit_diff 
+            valid_pairs += 1
+        else:
+            warnings.warn(f"Model failed baseline on prefix: '{pair.clean}'. Skipping.")
 
-    ranked = rank_heads(patching_result.scores)
+    if valid_pairs == 0:
+        raise RuntimeError("Model failed baseline on all pairs. Check your target tokens!")
+
+    # Calculate the average Grammaticality score across all valid pairs
+    avg_scores = total_scores / valid_pairs
+    print(f"\nSuccessfully aggregated scores over {valid_pairs} valid pairs.")
+
+    avg_base_grammaticality = total_base_grammaticality / valid_pairs
+
+    print(f"\n--- BASELINE METRICS ---")
+    print(f"Base Grammaticality Score: {avg_base_grammaticality:.4f}")
+    print(f"------------------------\n")
+
+    # 6. Analysis and Visualization
+    percentile = 95
+
+    print(f"Max average score: {avg_scores.max().item():.4f} at {np.unravel_index(avg_scores.argmax(), avg_scores.shape)}")
+
+    ranked = rank_heads(avg_scores)
     print(f"Top 5 heads: {ranked[:5]}")
 
-    critical = get_critical_heads(patching_result.scores, percentile=percentile)
+    critical = get_critical_heads(avg_scores, percentile=percentile)
     print(f"Critical heads (top {100-percentile}%): {critical}")
 
-    fig = plot_patching_heatmap(patching_result.scores, save_path="figures/test_activation_patching_heatmap.png")
+    fig = plot_patching_heatmap(avg_scores, save_path="figures/test_activation_patching_heatmap.png")
+    print("Heatmap saved to figures/test_activation_patching_heatmap.png")
