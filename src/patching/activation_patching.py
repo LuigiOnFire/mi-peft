@@ -19,6 +19,8 @@ class PatchingResult:
     scores: np.ndarray # Shape (n_layers, n_heads)
     clean_logit_diff: float
     corrupted_logit_diff: float
+    clean_g_ratio: float
+    corrupted_g_ratio: float
 
 def compute_logit_difference(logits, correct_id, incorrect_id):
     """Get logit(correct) - logit(incorrect) at final position"""
@@ -36,19 +38,19 @@ def get_first_token_id(model, word: str) -> int:
     return tokens[0, 0].item()
 
 def logits_to_ave_logit_diff(
-    logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Int[Tensor, "batch 2"],
+    logits: Tensor,
+    answer_tokens: Tensor,
     per_prompt: bool = False,
-) -> Float[Tensor, "*batch"]:
+) -> Tensor:
     """
     Returns logit difference between the correct and incorrect answer.
 
     If per_prompt=True, return the array of differences rather than the average.
     """
     # Only the final logits are relevant for the answer
-    final_logits: Float[Tensor, "batch d_vocab"] = logits[:, -1, :]
+    final_logits: Tensor = logits[:, -1, :]
     # Get the logits corresponding to the indirect object / subject tokens respectively
-    answer_logits: Float[Tensor, "batch 2"] = final_logits.gather(dim=-1, index=answer_tokens)
+    answer_logits: Tensor = final_logits.gather(dim=-1, index=answer_tokens)
     # Find logit difference
     correct_logits, incorrect_logits = answer_logits.unbind(dim=-1)
     answer_logit_diff = correct_logits - incorrect_logits
@@ -91,10 +93,12 @@ def run_activation_patching(model, pair) -> PatchingResult:
     incorrect_id = get_first_token_id(model, pair.target_incorrect)
 
     clean_logit_diff = compute_logit_difference(clean_logits, correct_id, incorrect_id)
-    print(f"Clean logit diff: {clean_logit_diff:.4f}")
+    clean_g_ratio = np.exp(clean_logit_diff)
+    print(f"Clean logit diff: {clean_logit_diff:.4f} (G-Ratio: {clean_g_ratio:.4f})")
 
     corrupted_logit_diff = compute_logit_difference(corrupted_logits, correct_id, incorrect_id)
-    print(f"Corrupted logit diff: {corrupted_logit_diff:.4f}")
+    corrupted_g_ratio = np.exp(corrupted_logit_diff)
+    print(f"Corrupted logit diff: {corrupted_logit_diff:.4f} (G-Ratio: {corrupted_g_ratio:.4f})")
 
     # Pre-allocate scores array
     n_layers = model.cfg.n_layers
@@ -118,4 +122,10 @@ def run_activation_patching(model, pair) -> PatchingResult:
             
             scores[layer, head] = patched_logit_diff - corrupted_logit_diff
     
-    return PatchingResult(scores=scores, clean_logit_diff=clean_logit_diff, corrupted_logit_diff=corrupted_logit_diff)
+    return PatchingResult(
+        scores=scores, 
+        clean_logit_diff=clean_logit_diff, 
+        corrupted_logit_diff=corrupted_logit_diff,
+        clean_g_ratio=clean_g_ratio,
+        corrupted_g_ratio=corrupted_g_ratio
+    )

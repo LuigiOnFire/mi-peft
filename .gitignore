@@ -36,5 +36,6 @@ outputs/*
 # OS
 .DS_Store
 
-# Figures
+# Data
 figures/*
+data/*
