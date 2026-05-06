@@ -136,6 +136,26 @@ class MaskedLoRALinear(nn.Module):
 
         self.dropout = nn.Dropout(p=dropout)
 
+    @property
+    def weight(self):
+        """
+        Dynamically merges the LoRA weight into the base weight for external reads.
+        This allows frameworks like TransformerLens to successfully extract the 
+        post-intervention weights without crashing!
+        """
+        if self.is_conv1d:
+            delta_W = self.lora_A @ self.lora_B
+            masked_delta_W = delta_W * self.mask
+            return self.base_layer.weight + masked_delta_W * self.scaling
+        else:
+            delta_W = self.lora_B @ self.lora_A
+            masked_delta_W = delta_W * self.mask
+            return self.base_layer.weight + masked_delta_W * self.scaling
+
+    @property
+    def bias(self):
+        """Pass-through for bias so TransformerLens can read it cleanly."""
+        return self.base_layer.bias
 
     def forward(self, x):
         # The frozen representation from the pretrained weights

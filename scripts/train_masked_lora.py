@@ -18,9 +18,13 @@ from src.peft.masked_lora import HeadMasker, inject_masked_lora
 # CRITICAL_HEADS = [(7, 2), (8, 4), (9, 1)] 
 # ==============================================================================
 CRITICAL_HEADS = [
-    (7, 2), 
-    (8, 4), 
-    # Add your actual critical SVA heads here from Phase 1 Heatmap
+    (7, 4), 
+    (8, 6), 
+    (10, 9),
+    (6, 0),
+    (10, 5),
+    (11, 10),
+    (5, 2)
 ]
 
 def train_masked_lora():
